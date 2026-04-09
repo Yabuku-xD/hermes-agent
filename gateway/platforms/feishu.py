@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 # aiohttp/websockets are independent optional deps — import outside lark_oapi
 # so they remain available for tests and webhook mode even if lark_oapi is missing.
@@ -115,6 +116,7 @@ _MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _MENTION_RE = re.compile(r"@_user_\d+")
 _MULTISPACE_RE = re.compile(r"[ \t]{2,}")
 _POST_CONTENT_INVALID_RE = re.compile(r"content format of the post type is incorrect", re.IGNORECASE)
+_URL_RE = re.compile(r"https?://[^\s<>\]\)]+", re.IGNORECASE)
 # ---------------------------------------------------------------------------
 # Media type sets and upload constants
 # ---------------------------------------------------------------------------
@@ -141,6 +143,7 @@ _FEISHU_DOC_UPLOAD_TYPES = {
 # ---------------------------------------------------------------------------
 
 _MAX_TEXT_INJECT_BYTES = 100 * 1024
+_MAX_FEISHU_DOC_LINKS_PER_MESSAGE = 3
 _FEISHU_CONNECT_ATTEMPTS = 3
 _FEISHU_SEND_ATTEMPTS = 3
 _FEISHU_APP_LOCK_SCOPE = "feishu-app-id"
@@ -169,6 +172,7 @@ _FEISHU_CARD_ACTION_DEDUP_TTL_SECONDS = 15 * 60    # card action token dedup win
 _FEISHU_BOT_MSG_TRACK_SIZE = 512                   # LRU size for tracking sent message IDs
 _FEISHU_REPLY_FALLBACK_CODES = frozenset({230011, 231003})  # reply target withdrawn/missing → create fallback
 _FEISHU_ACK_EMOJI = "OK"
+_FEISHU_DOC_HOSTS = frozenset({"docs.feishu.cn", "docs.larksuite.com"})
 # ---------------------------------------------------------------------------
 # Fallback display strings
 # ---------------------------------------------------------------------------
@@ -1045,6 +1049,8 @@ class FeishuAdapter(BasePlatformAdapter):
         self._sent_message_id_order: List[str] = []  # LRU order for _sent_message_ids_to_chat
         self._chat_info_cache: Dict[str, Dict[str, Any]] = {}
         self._message_text_cache: Dict[str, Optional[str]] = {}
+        self._tenant_access_token: str = ""
+        self._tenant_access_token_expire_at: float = 0.0
         self._app_lock_identity: Optional[str] = None
         self._text_batch_state = FeishuBatchState()
         self._pending_text_batches = self._text_batch_state.events
@@ -2580,6 +2586,8 @@ class FeishuAdapter(BasePlatformAdapter):
             if injected:
                 text = injected
 
+        text = await self._maybe_inject_feishu_doc_links(text)
+
         return text, inbound_type, media_urls, media_types
 
     async def _download_feishu_message_resources(
@@ -2659,6 +2667,174 @@ class FeishuAdapter(BasePlatformAdapter):
         except (OSError, UnicodeDecodeError):
             logger.warning("[Feishu] Failed to inject text document content from %s", cached_path, exc_info=True)
             return ""
+
+    async def _maybe_inject_feishu_doc_links(self, text: str) -> str:
+        if not text or not self._client:
+            return text
+
+        doc_links = self._extract_feishu_doc_links(text)[:_MAX_FEISHU_DOC_LINKS_PER_MESSAGE]
+        if not doc_links:
+            return text
+
+        remaining_budget = _MAX_TEXT_INJECT_BYTES
+        injections: List[str] = []
+        for doc_url, document_id in doc_links:
+            if remaining_budget <= 0:
+                break
+            try:
+                content = await self._fetch_feishu_doc_raw_content(document_id)
+            except Exception as exc:
+                logger.warning(
+                    "[Feishu] Failed to fetch cloud document %s from %s: %s",
+                    document_id,
+                    doc_url,
+                    exc,
+                )
+                continue
+
+            normalized = (content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+            if not normalized:
+                continue
+
+            truncated_content, was_truncated = self._truncate_utf8_text(normalized, remaining_budget)
+            if not truncated_content:
+                break
+
+            injections.append(
+                self._build_feishu_doc_injection(
+                    document_id=document_id,
+                    content=truncated_content,
+                    truncated=was_truncated,
+                )
+            )
+            remaining_budget -= len(truncated_content.encode("utf-8"))
+            if was_truncated:
+                break
+
+        if not injections:
+            return text
+
+        injected_text = "\n\n".join(injections)
+        return f"{injected_text}\n\n{text}" if text else injected_text
+
+    @staticmethod
+    def _extract_feishu_doc_links(text: str) -> List[tuple[str, str]]:
+        results: List[tuple[str, str]] = []
+        seen_document_ids: set[str] = set()
+        for match in _URL_RE.finditer(text or ""):
+            raw_url = match.group(0).rstrip(".,;!?")
+            parsed = urlparse(raw_url)
+            host = (parsed.netloc or "").lower()
+            if host not in _FEISHU_DOC_HOSTS:
+                continue
+
+            path_parts = [part for part in parsed.path.split("/") if part]
+            try:
+                docx_index = path_parts.index("docx")
+                document_id = path_parts[docx_index + 1]
+            except (ValueError, IndexError):
+                continue
+
+            normalized_id = re.sub(r"[^A-Za-z0-9]", "", document_id)
+            if not normalized_id or normalized_id in seen_document_ids:
+                continue
+            seen_document_ids.add(normalized_id)
+            results.append((raw_url, normalized_id))
+        return results
+
+    @staticmethod
+    def _truncate_utf8_text(text: str, max_bytes: int) -> tuple[str, bool]:
+        encoded = (text or "").encode("utf-8")
+        if len(encoded) <= max_bytes:
+            return text, False
+        if max_bytes <= 0:
+            return "", True
+        return encoded[:max_bytes].decode("utf-8", errors="ignore"), True
+
+    @staticmethod
+    def _build_feishu_doc_injection(*, document_id: str, content: str, truncated: bool) -> str:
+        safe_id = re.sub(r"[^\w.\- ]", "_", document_id or "document")
+        suffix = "\n\n[Feishu doc content truncated to fit message context.]" if truncated else ""
+        return f"[Content of Feishu doc {safe_id}]:\n{content}{suffix}"
+
+    def _feishu_open_api_base(self) -> str:
+        return "https://open.larksuite.com" if self._domain_name == "lark" else "https://open.feishu.cn"
+
+    async def _get_feishu_tenant_access_token(self) -> str:
+        now = time.time()
+        if self._tenant_access_token and now < max(0.0, self._tenant_access_token_expire_at - 300):
+            return self._tenant_access_token
+
+        import httpx
+
+        response_payload: Dict[str, Any] = {}
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.post(
+                f"{self._feishu_open_api_base()}/open-apis/auth/v3/tenant_access_token/internal",
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                json={
+                    "app_id": self._app_id,
+                    "app_secret": self._app_secret,
+                },
+            )
+            response.raise_for_status()
+            response_payload = response.json()
+
+        code = int(response_payload.get("code", 0) or 0)
+        if code != 0:
+            raise RuntimeError(
+                f"tenant_access_token request failed [{code}] "
+                f"{response_payload.get('msg', 'unknown error')}"
+            )
+
+        token = str(response_payload.get("tenant_access_token") or "").strip()
+        if not token:
+            raise RuntimeError("tenant_access_token response missing token")
+
+        expire_seconds = int(response_payload.get("expire", 0) or 0)
+        self._tenant_access_token = token
+        self._tenant_access_token_expire_at = now + max(0, expire_seconds)
+        return token
+
+    async def _fetch_feishu_doc_raw_content(self, document_id: str) -> str:
+        access_token = await self._get_feishu_tenant_access_token()
+        try:
+            return await self._request_feishu_doc_raw_content(document_id=document_id, access_token=access_token)
+        except RuntimeError as exc:
+            if "[401]" not in str(exc):
+                raise
+            self._tenant_access_token = ""
+            self._tenant_access_token_expire_at = 0.0
+            refreshed_token = await self._get_feishu_tenant_access_token()
+            return await self._request_feishu_doc_raw_content(document_id=document_id, access_token=refreshed_token)
+
+    async def _request_feishu_doc_raw_content(self, *, document_id: str, access_token: str) -> str:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(
+                f"{self._feishu_open_api_base()}/open-apis/docx/v1/documents/{document_id}/raw_content",
+                headers={"Authorization": f"Bearer {access_token}"},
+                params={"lang": 0},
+            )
+
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        payload: Dict[str, Any]
+        try:
+            payload = response.json()
+        except Exception:
+            payload = {}
+
+        if status_code >= 400:
+            message = payload.get("msg") or response.text[:200] or "request failed"
+            raise RuntimeError(f"[{status_code}] {message}")
+
+        code = int(payload.get("code", 0) or 0)
+        if code != 0:
+            raise RuntimeError(f"[{code}] {payload.get('msg', 'request failed')}")
+
+        data = payload.get("data") or {}
+        return str(data.get("content") or "")
 
     async def _download_feishu_image(self, *, message_id: str, image_key: str) -> tuple[str, str]:
         if not self._client or not message_id:

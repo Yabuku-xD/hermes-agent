@@ -37,6 +37,11 @@ Set it to `false` only if you explicitly want one shared conversation per chat.
 2. Create a new app.
 3. In **Credentials & Basic Info**, copy the **App ID** and **App Secret**.
 4. Enable the **Bot** capability for the app.
+5. If you want Hermes to read shared Feishu/Lark cloud-document links automatically, grant at least one of:
+   - `docx:document`
+   - `docx:document:readonly`
+
+For document links inside knowledge-base or drive workflows, `drive:drive` or `drive:drive:readonly` may also be useful depending on how your workspace shares access.
 
 :::warning
 Keep the App Secret private. Anyone with it can impersonate your app.
@@ -231,6 +236,8 @@ Media from rich-text (post) messages, including inline images and file attachmen
 
 For small text-based documents (.txt, .md), the file content is automatically injected into the message text so the agent can read it directly without needing tools.
 
+When users send Feishu/Lark cloud-document links such as `https://docs.feishu.cn/docx/...` or `https://docs.larksuite.com/docx/...`, Hermes will also attempt to fetch the document's raw text via the Feishu Open API and inject that content into the inbound message context.
+
 ### Outbound (sending)
 
 | Method | What it sends |
@@ -411,6 +418,7 @@ WebSocket and per-group ACL settings are configured via `config.yaml` under `pla
 | `Webhook rejected: invalid signature` | Ensure `FEISHU_ENCRYPT_KEY` matches the encrypt key in your Feishu app config |
 | Post messages show as plain text | The Feishu API rejected the post payload; this is normal fallback behavior. Check logs for details. |
 | Images/files not received by bot | Grant `im:message` and `im:resource` permission scopes to your Feishu app |
+| Feishu cloud-document links are not expanded | Grant `docx:document` or `docx:document:readonly`, then make sure the app itself has permission to read the target document |
 | Bot identity not auto-detected | Grant `admin:app.info:readonly` scope, or set `FEISHU_BOT_OPEN_ID` / `FEISHU_BOT_NAME` manually |
 | `Webhook rate limit exceeded` | More than 120 requests/minute from the same IP. This is usually a misconfiguration or loop. |
 

@@ -169,6 +169,28 @@ class TestFeishuPostParsing(unittest.TestCase):
 
 
 class TestFeishuMessageNormalization(unittest.TestCase):
+    def test_extract_feishu_doc_links_supports_feishu_and_lark_docx_urls(self):
+        from gateway.platforms.feishu import FeishuAdapter
+
+        links = FeishuAdapter._extract_feishu_doc_links(
+            "\n".join(
+                [
+                    "https://docs.feishu.cn/docx/doxcn1234567890ABCDEFGHijk",
+                    "[Spec](https://docs.larksuite.com/docx/doxcnABCDEFGHIJKLMN1234567?from=share)",
+                    "https://example.com/docx/doxcnignored",
+                    "https://docs.feishu.cn/wiki/space_token",
+                ]
+            )
+        )
+
+        self.assertEqual(
+            links,
+            [
+                ("https://docs.feishu.cn/docx/doxcn1234567890ABCDEFGHijk", "doxcn1234567890ABCDEFGHijk"),
+                ("https://docs.larksuite.com/docx/doxcnABCDEFGHIJKLMN1234567?from=share", "doxcnABCDEFGHIJKLMN1234567"),
+            ],
+        )
+
     def test_normalize_merge_forward_preserves_summary_lines(self):
         from gateway.platforms.feishu import normalize_feishu_message
 
@@ -1234,6 +1256,86 @@ class TestAdapterBehavior(unittest.TestCase):
             resource_type="file",
             fallback_filename="spec.pdf",
         )
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_extract_text_message_injects_feishu_cloud_doc_content(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.feishu import FeishuAdapter
+
+        adapter = FeishuAdapter(PlatformConfig())
+        adapter._client = SimpleNamespace()
+        adapter._fetch_feishu_doc_raw_content = AsyncMock(return_value="Sprint plan\n- Ship the fix")
+        message = SimpleNamespace(
+            message_type="text",
+            content=json.dumps({"text": "Please review https://docs.feishu.cn/docx/doxcn1234567890ABCDEFGHijk"}),
+            message_id="om_text_doc",
+        )
+
+        text, msg_type, media_urls, media_types = asyncio.run(adapter._extract_message_content(message))
+
+        self.assertEqual(
+            text,
+            "[Content of Feishu doc doxcn1234567890ABCDEFGHijk]:\n"
+            "Sprint plan\n- Ship the fix\n\n"
+            "Please review https://docs.feishu.cn/docx/doxcn1234567890ABCDEFGHijk",
+        )
+        self.assertEqual(msg_type.value, "text")
+        self.assertEqual(media_urls, [])
+        self.assertEqual(media_types, [])
+        adapter._fetch_feishu_doc_raw_content.assert_awaited_once_with("doxcn1234567890ABCDEFGHijk")
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_extract_post_message_injects_markdown_linked_feishu_doc_content(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.feishu import FeishuAdapter
+
+        adapter = FeishuAdapter(PlatformConfig())
+        adapter._client = SimpleNamespace()
+        adapter._fetch_feishu_doc_raw_content = AsyncMock(return_value="Architecture notes")
+        message = SimpleNamespace(
+            message_type="post",
+            content=(
+                '{"en_us":{"title":"Spec","content":['
+                '[{"tag":"text","text":"Context"}],'
+                '[{"tag":"a","text":"Design doc","href":"https://docs.feishu.cn/docx/doxcnABCDEFGHIJKLMN1234567"}]'
+                ']}}'
+            ),
+            message_id="om_post_doc",
+        )
+
+        text, msg_type, media_urls, media_types = asyncio.run(adapter._extract_message_content(message))
+
+        self.assertEqual(
+            text,
+            "[Content of Feishu doc doxcnABCDEFGHIJKLMN1234567]:\n"
+            "Architecture notes\n\n"
+            "Spec\nContext\n[Design doc](https://docs.feishu.cn/docx/doxcnABCDEFGHIJKLMN1234567)",
+        )
+        self.assertEqual(msg_type.value, "text")
+        self.assertEqual(media_urls, [])
+        self.assertEqual(media_types, [])
+        adapter._fetch_feishu_doc_raw_content.assert_awaited_once_with("doxcnABCDEFGHIJKLMN1234567")
+
+    @patch.dict(os.environ, {}, clear=True)
+    def test_extract_message_keeps_original_text_when_feishu_doc_fetch_fails(self):
+        from gateway.config import PlatformConfig
+        from gateway.platforms.feishu import FeishuAdapter
+
+        adapter = FeishuAdapter(PlatformConfig())
+        adapter._client = SimpleNamespace()
+        adapter._fetch_feishu_doc_raw_content = AsyncMock(side_effect=RuntimeError("forbidden"))
+        message = SimpleNamespace(
+            message_type="text",
+            content=json.dumps({"text": "Doc https://docs.feishu.cn/docx/doxcn1234567890ABCDEFGHijk"}),
+            message_id="om_text_doc_fail",
+        )
+
+        text, msg_type, media_urls, media_types = asyncio.run(adapter._extract_message_content(message))
+
+        self.assertEqual(text, "Doc https://docs.feishu.cn/docx/doxcn1234567890ABCDEFGHijk")
+        self.assertEqual(msg_type.value, "text")
+        self.assertEqual(media_urls, [])
+        self.assertEqual(media_types, [])
 
     @patch.dict(os.environ, {}, clear=True)
     def test_extract_merge_forward_message_as_text_summary(self):

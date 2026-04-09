@@ -27,6 +27,7 @@ PLATFORMS = {
     "homeassistant": "🏠 Home Assistant",
     "mattermost": "💬 Mattermost",
     "matrix":   "💬 Matrix",
+    "bluebubbles": "💬 BlueBubbles",
     "dingtalk": "💬 DingTalk",
     "feishu": "🪽 Feishu",
     "wecom": "💬 WeCom",

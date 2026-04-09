@@ -9,12 +9,35 @@ RUN apt-get update && \
 COPY . /opt/hermes
 WORKDIR /opt/hermes
 
-# Install Python and Node dependencies in one layer, no cache
-RUN pip install --no-cache-dir -e ".[all]" --break-system-packages && \
-    npm install --prefer-offline --no-audit && \
-    npx playwright install --with-deps chromium --only-shell && \
-    cd /opt/hermes/scripts/whatsapp-bridge && \
-    npm install --prefer-offline --no-audit && \
+# Install Python and Node dependencies in one layer, no cache.
+# Split optional extras into smaller pip passes to avoid resolver-too-deep
+# failures when buildx tries to solve the entire `.[all]` extra at once.
+RUN set -eux; \
+    pip install --no-cache-dir -e . --break-system-packages; \
+    for extra in \
+        modal \
+        daytona \
+        messaging \
+        cron \
+        cli \
+        dev \
+        tts-premium \
+        pty \
+        honcho \
+        mcp \
+        homeassistant \
+        sms \
+        acp \
+        voice \
+        dingtalk \
+        feishu \
+        mistral; do \
+        pip install --no-cache-dir -e ".[${extra}]" --break-system-packages; \
+    done; \
+    npm install --prefer-offline --no-audit; \
+    npx playwright install --with-deps chromium --only-shell; \
+    cd /opt/hermes/scripts/whatsapp-bridge; \
+    npm install --prefer-offline --no-audit; \
     npm cache clean --force
 
 WORKDIR /opt/hermes

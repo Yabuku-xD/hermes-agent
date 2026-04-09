@@ -1795,7 +1795,7 @@ requires-dist = [
     { name = "croniter", marker = "extra == 'cron'", specifier = ">=6.0.0,<7" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.148.0,<1" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = ">=1.8.0,<2" },
-    { name = "dingtalk-stream", marker = "extra == 'dingtalk'", specifier = ">=0.1.0,<1" },
+    { name = "dingtalk-stream", marker = "extra == 'dingtalk'", specifier = ">=0.24.3,<1" },
     { name = "discord-py", extras = ["voice"], marker = "extra == 'messaging'", specifier = ">=2.7.1,<3" },
     { name = "edge-tts", specifier = ">=7.2.7,<8" },
     { name = "elevenlabs", marker = "extra == 'tts-premium'", specifier = ">=1.0,<2" },
@@ -1822,7 +1822,7 @@ requires-dist = [
     { name = "hermes-agent", extras = ["sms"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["tts-premium"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["voice"], marker = "extra == 'all'" },
-    { name = "honcho-ai", marker = "extra == 'honcho'", specifier = ">=2.0.1,<3" },
+    { name = "honcho-ai", marker = "extra == 'honcho'", specifier = ">=2.1.0,<3" },
     { name = "httpx", specifier = ">=0.28.1,<1" },
     { name = "jinja2", specifier = ">=3.1.5,<4" },
     { name = "lark-oapi", marker = "extra == 'feishu'", specifier = ">=1.5.3,<2" },
@@ -1928,16 +1928,16 @@ wheels = [
 
 [[package]]
 name = "honcho-ai"
-version = "2.0.1"
+version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/93/30/d30ba159404050d53b4b1b1c4477f9591f43af18758be1fb7dab6afbfe7d/honcho_ai-2.0.1.tar.gz", hash = "sha256:6fdeebf9454e62bc523d57888e50359e67baafdb21f68621f9c14e08dc00623a", size = 46732, upload-time = "2026-02-09T21:03:26.99Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/07/fb2a6654a9f44ff1070d88feb269113a865923e0aa91acf7864459179a1b/honcho_ai-2.1.0.tar.gz", hash = "sha256:c1988bbbf61492c2db168c2f0aa4317c489e18ea9867f74cb318a5f1b83289c8", size = 48050, upload-time = "2026-03-30T14:59:56.731Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/de/83fda0c057cfa11d6b5ed532623184591aa7dcff4a067934ba6811026229/honcho_ai-2.0.1-py3-none-any.whl", hash = "sha256:94887e61d59f353e1e1e20b395858040780f5d67ca1e9d450538646544e4e42f", size = 56780, upload-time = "2026-02-09T21:03:25.992Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/34/b814ea3bed1d96807377814461d58294f0d6c5c66e29f06625c0ac6069b6/honcho_ai-2.1.0-py3-none-any.whl", hash = "sha256:c07389036ef839ff31dc66e4757fa451da25ce976830bce108372e0756daf500", size = 58295, upload-time = "2026-03-30T14:59:55.774Z" },
 ]
 
 [[package]]

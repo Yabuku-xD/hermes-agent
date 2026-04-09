@@ -768,6 +768,24 @@ class TestAuxiliaryPoolAwareness:
         assert client is not None
         assert provider == "custom:local"
 
+    def test_vision_auto_falls_back_to_codex(self, monkeypatch):
+        """When OpenRouter/Nous are unavailable, vision auto should use Codex auth."""
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        with (
+            patch("agent.auxiliary_client._read_main_provider", return_value=""),
+            patch("agent.auxiliary_client._read_main_model", return_value=""),
+            patch("agent.auxiliary_client._read_nous_auth", return_value=None),
+            patch("agent.auxiliary_client._read_codex_access_token", return_value="codex-token"),
+            patch("agent.auxiliary_client.OpenAI", return_value=MagicMock()),
+        ):
+            provider, client, model = resolve_vision_provider_client()
+
+        assert provider == "openai-codex"
+        assert client is not None
+        assert model == "gpt-5.2-codex"
+
     def test_vision_direct_endpoint_override(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
         monkeypatch.setenv("AUXILIARY_VISION_BASE_URL", "http://localhost:4567/v1")

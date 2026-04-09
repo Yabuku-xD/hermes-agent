@@ -224,6 +224,7 @@ if not _configured_cwd or _configured_cwd in (".", "auto", "cwd"):
 from gateway.config import (
     Platform,
     GatewayConfig,
+    HomeChannel,
     load_gateway_config,
 )
 from gateway.session import (
@@ -4015,19 +4016,24 @@ class GatewayRunner:
         chat_name = source.chat_name or chat_id
         
         env_key = f"{platform_name.upper()}_HOME_CHANNEL"
-        
-        # Save to config.yaml
+
+        # Home-channel IDs are env-managed settings and belong in ~/.hermes/.env,
+        # not config.yaml. Mirror the change into the live GatewayConfig too so
+        # cron delivery and cross-platform routing use the new destination
+        # immediately without requiring a restart.
         try:
-            import yaml
-            config_path = _hermes_home / 'config.yaml'
-            user_config = {}
-            if config_path.exists():
-                with open(config_path, encoding="utf-8") as f:
-                    user_config = yaml.safe_load(f) or {}
-            user_config[env_key] = chat_id
-            atomic_yaml_write(config_path, user_config)
-            # Also set in the current environment so it takes effect immediately
+            from hermes_cli.config import save_env_value
+
+            save_env_value(env_key, str(chat_id))
             os.environ[env_key] = str(chat_id)
+
+            platform_cfg = self.config.platforms.get(source.platform)
+            if platform_cfg is not None:
+                platform_cfg.home_channel = HomeChannel(
+                    platform=source.platform,
+                    chat_id=str(chat_id),
+                    name=chat_name,
+                )
         except Exception as e:
             return f"Failed to save home channel: {e}"
         
